@@ -1,6 +1,6 @@
 <?php
 /**
- * Plugin Name: Give- Database HealthCheck
+ * Plugin Name: Give - Database HealthCheck
  * Plugin URI: https://github.com/WordImpress/Give-Database-Healthcheck
  * Description: The most robust, flexible, and intuitive way to accept donations on WordPress.
  * Author: WordImpress
