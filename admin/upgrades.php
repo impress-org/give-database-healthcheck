@@ -26,13 +26,25 @@ function give_db_healthcheck_notices() {
 
 		)
 	);
+
+	Give_Updates::get_instance()->register(
+		array(
+			'id'       => 'give_db_healthcheck_donation_donor',
+			'version'  => '0.0.2',
+			'callback' => 'give_db_healthcheck_donation_donor_callback',
+			'depend'   => array(
+				'give_db_healthcheck_post_200_data',
+			),
+
+		)
+	);
 }
 
 add_action( 'give_register_updates', 'give_db_healthcheck_notices' );
 
 
 /**
- *
+ * Fix corrupted payment meta if any
  *
  * @since 0.0.1
  */
@@ -119,5 +131,47 @@ function give_db_healthcheck_post_200_data_callback() {
 
 		// No more forms found, finish up.
 		give_set_upgrade_complete( 'give_db_healthcheck_post_200_data' );
+	}
+}
+
+
+/**
+ * Fix corrupted payment donor if any
+ *
+ * @since 0.0.2
+ */
+function give_db_healthcheck_donation_donor_callback(){
+	global $wpdb;
+	$give_updates = Give_Updates::get_instance();
+
+	$payments = $wpdb->get_col(
+		"
+			SELECT ID FROM $wpdb->posts
+			WHERE 1=1
+			AND $wpdb->posts.post_type = 'give_payment'
+			AND {$wpdb->posts}.post_status IN ('" . implode( "','", array_keys( give_get_payment_statuses() ) ) . "')
+			ORDER BY $wpdb->posts.post_date ASC 
+			LIMIT 100
+			OFFSET " . $give_updates->get_offset( 100 )
+	);
+
+	if( $payments ) {
+		foreach ( $payments as $payment ){
+
+			if(
+				! give_get_meta( $payment, '_give_payment_donor_id', true )
+				&& ( $donor_email = give_get_meta( $payment, '_give_payment_donor_email', true ) )
+			){
+				if( $donor_id = Give()->donors->get_column_by( 'id', 'email', $donor_email ) ) {
+					give_update_meta( $payment, '_give_payment_donor_id', $donor_id );
+				}
+			}
+		}
+	}else {
+		// @todo Delete user id meta after releases 2.0
+		// $wpdb->get_var( $wpdb->prepare( "DELETE FROM $wpdb->postmeta WHERE meta_key=%s", '_give_payment_user_id' ) );
+
+		// No more forms found, finish up.
+		give_set_upgrade_complete( 'give_db_healthcheck_donation_donor' );
 	}
 }
