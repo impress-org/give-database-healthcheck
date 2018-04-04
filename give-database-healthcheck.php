@@ -5,7 +5,7 @@
  * Description: The most robust, flexible, and intuitive way to accept donations on WordPress.
  * Author: WordImpress
  * Author URI: https://wordimpress.com
- * Version: 0.0.1
+ * Version: 0.0.2
  * Text Domain: give-database-healthcheck
  * Domain Path: /languages
  * GitHub Plugin URI: https://github.com/WordImpress/Give-Database-Healthcheck
@@ -57,7 +57,7 @@ final class Give_Database_HealthCheck {
 	 */
 	private function constants() {
 		define( 'GIVE_DATABASE_HealthCheck_DIR', plugin_dir_path( __FILE__ ) );
-		define( 'GIVE_DATABASE_HealthCheck_VERSION', '0.0.1' );
+		define( 'GIVE_DATABASE_HealthCheck_VERSION', '0.0.2' );
 	}
 
 	/**
