@@ -38,6 +38,18 @@ function give_db_healthcheck_notices() {
 
 		)
 	);
+
+	Give_Updates::get_instance()->register(
+		array(
+			'id'       => 'give_db_healthcheck_003_recover_old_paymentdata',
+			'version'  => '0.0.3',
+			'callback' => 'give_db_healthcheck_003_recover_old_paymentdata_callback',
+			'depend'   => array(
+				'give_db_healthcheck_post_200_data',
+			),
+
+		)
+	);
 }
 
 add_action( 'give_register_updates', 'give_db_healthcheck_notices' );
@@ -140,7 +152,7 @@ function give_db_healthcheck_post_200_data_callback() {
  *
  * @since 0.0.2
  */
-function give_db_healthcheck_donation_donor_callback(){
+function give_db_healthcheck_donation_donor_callback() {
 	global $wpdb;
 	$give_updates = Give_Updates::get_instance();
 
@@ -155,23 +167,102 @@ function give_db_healthcheck_donation_donor_callback(){
 			OFFSET " . $give_updates->get_offset( 100 )
 	);
 
-	if( $payments ) {
-		foreach ( $payments as $payment ){
+	if ( $payments ) {
+		foreach ( $payments as $payment ) {
 
-			if(
+			if (
 				! give_get_meta( $payment, '_give_payment_donor_id', true )
 				&& ( $donor_email = give_get_meta( $payment, '_give_payment_donor_email', true ) )
-			){
-				if( $donor_id = Give()->donors->get_column_by( 'id', 'email', $donor_email ) ) {
+			) {
+				if ( $donor_id = Give()->donors->get_column_by( 'id', 'email', $donor_email ) ) {
 					give_update_meta( $payment, '_give_payment_donor_id', $donor_id );
 				}
 			}
 		}
-	}else {
+	} else {
 		// @todo Delete user id meta after releases 2.0
 		// $wpdb->get_var( $wpdb->prepare( "DELETE FROM $wpdb->postmeta WHERE meta_key=%s", '_give_payment_user_id' ) );
 
 		// No more forms found, finish up.
 		give_set_upgrade_complete( 'give_db_healthcheck_donation_donor' );
+	}
+}
+
+/**
+ * Recover old payment data
+ *
+ * @since 0.0.3
+ */
+function give_db_healthcheck_003_recover_old_paymentdata_callback() {
+	global $wpdb;
+
+	$give_updates = Give_Updates::get_instance();
+
+	// form query
+	$payments = new WP_Query( array(
+			'paged'          => $give_updates->step,
+			'status'         => 'any',
+			'order'          => 'ASC',
+			'post_type'      => array( 'give_payment' ),
+			'posts_per_page' => 100,
+		)
+	);
+
+	if ( $payments->have_posts() ) {
+		$give_updates->set_percentage( $payments->found_posts, $give_updates->step * 100 );
+
+		while ( $payments->have_posts() ) {
+			$payments->the_post();
+
+			$meta_data = $wpdb->get_results(
+				$wpdb->prepare(
+					"
+					SELECT * FROM $wpdb->postmeta
+					WHERE post_id=%d
+					",
+					get_the_ID()
+				),
+				ARRAY_A
+			);
+
+			if ( ! empty( $meta_data ) ) {
+				foreach ( $meta_data as $index => $data ) {
+					// ignore _give_payment_meta key.
+					if( '_give_payment_meta' === $data['meta_key'] ){
+						continue;
+					}
+
+					$is_duplicate_meta_key = $wpdb->get_results(
+						$wpdb->prepare(
+							"
+							SELECT * FROM {$wpdb->paymentmeta}
+							WHERE meta_key=%s
+							AND payment_id=%d
+							",
+							$data['meta_key'],
+							$data['post_id']
+						),
+						ARRAY_A
+					);
+
+					if ( $is_duplicate_meta_key ) {
+
+						continue;
+					}
+
+					$data['payment_id'] = $data['post_id'];
+					unset( $data['post_id'] );
+					unset( $data['meta_id'] );
+
+					Give()->payment_meta->insert( $data );
+				}
+			}
+
+		}// End while().
+
+		wp_reset_postdata();
+	} else {
+		// No more forms found, finish up.
+		give_set_upgrade_complete( 'give_db_healthcheck_003_recover_old_paymentdata' );
 	}
 }
