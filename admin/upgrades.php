@@ -62,7 +62,9 @@ add_action( 'give_register_updates', 'give_db_healthcheck_notices' );
  */
 function give_db_healthcheck_post_200_data_callback() {
 	global $wpdb, $post;
-	$give_updates = Give_Updates::get_instance();
+	$give_updates         = Give_Updates::get_instance();
+	$donation_id_col_name = Give()->payment_meta->get_meta_type() . '_id';
+	$donation_table       = Give()->payment_meta->table_name;
 
 	$payments = $wpdb->get_col(
 		"
@@ -83,7 +85,7 @@ function give_db_healthcheck_post_200_data_callback() {
 			setup_postdata( $post );
 
 			// Do not add new meta keys if already refactored.
-			if ( $wpdb->get_var( $wpdb->prepare( "SELECT meta_id FROM $wpdb->paymentmeta WHERE payment_id=%d AND meta_key=%s", $post->ID, '_give_payment_donor_id' ) ) ) {
+			if ( $wpdb->get_var( $wpdb->prepare( "SELECT meta_id FROM {$donation_table} WHERE {$donation_id_col_name}=%d AND meta_key=%s", $post->ID, '_give_payment_donor_id' ) ) ) {
 				continue;
 			}
 
@@ -104,16 +106,16 @@ function give_db_healthcheck_post_200_data_callback() {
 
 			foreach ( $deprecated_meta_keys as $old_meta_key => $new_meta_key ) {
 				// Do not add new meta key if already exist.
-				if ( $wpdb->get_var( $wpdb->prepare( "SELECT meta_id FROM $wpdb->paymentmeta WHERE payment_id=%d AND meta_key=%s", $post->ID, $new_meta_key ) ) ) {
+				if ( $wpdb->get_var( $wpdb->prepare( "SELECT meta_id FROM {$donation_table} WHERE {$donation_id_col_name}=%d AND meta_key=%s", $post->ID, $new_meta_key ) ) ) {
 					continue;
 				}
 
 				$wpdb->insert(
-					$wpdb->paymentmeta,
+					$donation_table,
 					array(
-						'payment_id' => $post->ID,
-						'meta_key'   => $new_meta_key,
-						'meta_value' => give_get_meta( $post->ID, $old_meta_key, true ),
+						"$donation_id_col_name" => $post->ID,
+						'meta_key'              => $new_meta_key,
+						'meta_value'            => give_get_meta( $post->ID, $old_meta_key, true ),
 					)
 				);
 			}
@@ -196,7 +198,9 @@ function give_db_healthcheck_donation_donor_callback() {
 function give_db_healthcheck_003_recover_old_paymentdata_callback() {
 	global $wpdb;
 
-	$give_updates = Give_Updates::get_instance();
+	$give_updates         = Give_Updates::get_instance();
+	$donation_id_col_name = Give()->payment_meta->get_meta_type() . '_id';
+	$donation_table       = Give()->payment_meta->table_name;
 
 	// form query
 	$payments = new WP_Query( array(
@@ -228,16 +232,16 @@ function give_db_healthcheck_003_recover_old_paymentdata_callback() {
 			if ( ! empty( $meta_data ) ) {
 				foreach ( $meta_data as $index => $data ) {
 					// ignore _give_payment_meta key.
-					if( '_give_payment_meta' === $data['meta_key'] ){
+					if ( '_give_payment_meta' === $data['meta_key'] ) {
 						continue;
 					}
 
 					$is_duplicate_meta_key = $wpdb->get_results(
 						$wpdb->prepare(
 							"
-							SELECT * FROM {$wpdb->paymentmeta}
+							SELECT * FROM {$donation_table}
 							WHERE meta_key=%s
-							AND payment_id=%d
+							AND {$donation_id_col_name}=%d
 							",
 							$data['meta_key'],
 							$data['post_id']
@@ -250,7 +254,8 @@ function give_db_healthcheck_003_recover_old_paymentdata_callback() {
 						continue;
 					}
 
-					$data['payment_id'] = $data['post_id'];
+					$data[ $donation_id_col_name ] = $data['post_id'];
+
 					unset( $data['post_id'] );
 					unset( $data['meta_id'] );
 
