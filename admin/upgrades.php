@@ -11,199 +11,40 @@ if ( ! defined( 'ABSPATH' ) ) {
  * @since 0.0.1
  */
 function give_db_healthcheck_notices() {
-	global $wpdb;
+	Give_Updates::get_instance()->register(
+		array(
+			'id'       => 'give_dbh_delete_existing_donationmeta_table',
+			'version'  => '0.0.3',
+			'callback' => 'give_dbh_delete_existing_donationmeta_table_callback',
+		)
+	);
 
-	// Give_Updates::get_instance()->register(
-	// 	array(
-	// 		'id'       => 'give_db_healthcheck_post_200_data',
-	// 		'version'  => '0.0.1',
-	// 		'callback' => 'give_db_healthcheck_post_200_data_callback',
-	// 		'depend'   => array(
-	// 			'v20_move_metadata_into_new_table',
-	// 			'v20_upgrades_form_metadata',
-	// 			'v20_upgrades_payment_metadata',
-	// 			'v201_upgrades_payment_metadata',
-	// 			'v201_move_metadata_into_new_table',
-	// 		),
-	//
-	// 	)
-	// );
-	//
-	// Give_Updates::get_instance()->register(
-	// 	array(
-	// 		'id'       => 'give_db_healthcheck_donation_donor',
-	// 		'version'  => '0.0.2',
-	// 		'callback' => 'give_db_healthcheck_donation_donor_callback',
-	// 		'depend'   => array(
-	// 			'give_db_healthcheck_post_200_data',
-	// 		),
-	//
-	// 	)
-	// );
-	//
-	// Give_Updates::get_instance()->register(
-	// 	array(
-	// 		'id'       => 'give_db_healthcheck_003_recover_old_paymentdata',
-	// 		'version'  => '0.0.3',
-	// 		'callback' => 'give_db_healthcheck_003_recover_old_paymentdata_callback',
-	// 		'depend'   => array(
-	// 			'give_db_healthcheck_post_200_data',
-	// 		),
-	//
-	// 	)
-	// );
 
-	if(
-		$wpdb->query( $wpdb->prepare( "SHOW TABLES LIKE %s", "{$wpdb->prefix}give_paymentmeta" ) )
-		&& ! give_has_upgrade_completed( 'v220_rename_donation_meta_type' )
-	) {
-		Give_Updates::get_instance()->register(
-			array(
-				'id'       => 'give_db_healthcheck_220_recover_donationmeta',
-				'version'  => '0.0.3',
-				'callback' => 'give_db_healthcheck_220_recover_donationmeta_callback',
-			)
-		);
-	}
+	Give_Updates::get_instance()->register(
+		array(
+			'id'       => 'give_db_healthcheck_003_recover_old_paymentdata',
+			'version'  => '0.0.3',
+			'callback' => 'give_db_healthcheck_003_recover_old_paymentdata_callback',
+			'depend'   => array( 'give_dbh_delete_existing_donationmeta_table' ),
+		)
+	);
 }
 
 add_action( 'give_register_updates', 'give_db_healthcheck_notices' );
 
 
 /**
- * Fix corrupted payment meta if any
+ * Remove corrupted data from give_donationmeta
  *
- * @since 0.0.1
+ * @since 0.0.3
  */
-function give_db_healthcheck_post_200_data_callback() {
-	global $wpdb, $post;
-	$give_updates         = Give_Updates::get_instance();
-	$donation_id_col_name = Give()->payment_meta->get_meta_type() . '_id';
-	$donation_table       = Give()->payment_meta->table_name;
-
-	$payments = $wpdb->get_col(
-		"
-			SELECT ID FROM $wpdb->posts
-			WHERE 1=1
-			AND $wpdb->posts.post_type = 'give_payment'
-			AND {$wpdb->posts}.post_status IN ('" . implode( "','", array_keys( give_get_payment_statuses() ) ) . "')
-			ORDER BY $wpdb->posts.post_date ASC 
-			LIMIT 100
-			OFFSET " . $give_updates->get_offset( 100 )
-	);
-
-	if ( ! empty( $payments ) ) {
-		$give_updates->set_percentage( give_get_total_post_type_count( 'give_payment' ), $give_updates->get_offset( 100 ) );
-
-		foreach ( $payments as $payment_id ) {
-			$post = get_post( $payment_id );
-			setup_postdata( $post );
-
-			// Do not add new meta keys if already refactored.
-			if ( $wpdb->get_var( $wpdb->prepare( "SELECT meta_id FROM {$donation_table} WHERE {$donation_id_col_name}=%d AND meta_key=%s", $post->ID, '_give_payment_donor_id' ) ) ) {
-				continue;
-			}
-
-
-			// Split _give_payment_meta meta.
-			// @todo Remove _give_payment_meta after releases 2.0
-			$payment_meta = give_get_meta( $post->ID, '_give_payment_meta', true );
-
-			if ( ! empty( $payment_meta ) ) {
-				_give_20_bc_split_and_save_give_payment_meta( $post->ID, $payment_meta );
-			}
-
-			$deprecated_meta_keys = array(
-				'_give_payment_customer_id' => '_give_payment_donor_id',
-				'_give_payment_user_email'  => '_give_payment_donor_email',
-				'_give_payment_user_ip'     => '_give_payment_donor_ip',
-			);
-
-			foreach ( $deprecated_meta_keys as $old_meta_key => $new_meta_key ) {
-				// Do not add new meta key if already exist.
-				if ( $wpdb->get_var( $wpdb->prepare( "SELECT meta_id FROM {$donation_table} WHERE {$donation_id_col_name}=%d AND meta_key=%s", $post->ID, $new_meta_key ) ) ) {
-					continue;
-				}
-
-				$wpdb->insert(
-					$donation_table,
-					array(
-						"$donation_id_col_name" => $post->ID,
-						'meta_key'              => $new_meta_key,
-						'meta_value'            => give_get_meta( $post->ID, $old_meta_key, true ),
-					)
-				);
-			}
-
-			// Bailout
-			if ( $donor_id = give_get_meta( $post->ID, '_give_payment_donor_id', true ) ) {
-				/* @var Give_Donor $donor */
-				$donor = new Give_Donor( $donor_id );
-
-				$address['line1']   = give_get_meta( $post->ID, '_give_donor_billing_address1', true, '' );
-				$address['line2']   = give_get_meta( $post->ID, '_give_donor_billing_address2', true, '' );
-				$address['city']    = give_get_meta( $post->ID, '_give_donor_billing_city', true, '' );
-				$address['state']   = give_get_meta( $post->ID, '_give_donor_billing_state', true, '' );
-				$address['zip']     = give_get_meta( $post->ID, '_give_donor_billing_zip', true, '' );
-				$address['country'] = give_get_meta( $post->ID, '_give_donor_billing_country', true, '' );
-
-				// Save address.
-				$donor->add_address( 'billing[]', $address );
-			}
-
-		}// End while().
-
-		wp_reset_postdata();
-	} else {
-		// @todo Delete user id meta after releases 2.0
-		// $wpdb->get_var( $wpdb->prepare( "DELETE FROM $wpdb->postmeta WHERE meta_key=%s", '_give_payment_user_id' ) );
-
-		// No more forms found, finish up.
-		give_set_upgrade_complete( 'give_db_healthcheck_post_200_data' );
-	}
-}
-
-
-/**
- * Fix corrupted payment donor if any
- *
- * @since 0.0.2
- */
-function give_db_healthcheck_donation_donor_callback() {
+function give_dbh_delete_existing_donationmeta_table_callback(){
 	global $wpdb;
-	$give_updates = Give_Updates::get_instance();
+	$wpdb->query( "TRUNCATE TABLE {$wpdb->prefix}give_donationmeta" );
 
-	$payments = $wpdb->get_col(
-		"
-			SELECT ID FROM $wpdb->posts
-			WHERE 1=1
-			AND $wpdb->posts.post_type = 'give_payment'
-			AND {$wpdb->posts}.post_status IN ('" . implode( "','", array_keys( give_get_payment_statuses() ) ) . "')
-			ORDER BY $wpdb->posts.post_date ASC 
-			LIMIT 100
-			OFFSET " . $give_updates->get_offset( 100 )
-	);
-
-	if ( $payments ) {
-		foreach ( $payments as $payment ) {
-
-			if (
-				! give_get_meta( $payment, '_give_payment_donor_id', true )
-				&& ( $donor_email = give_get_meta( $payment, '_give_payment_donor_email', true ) )
-			) {
-				if ( $donor_id = Give()->donors->get_column_by( 'id', 'email', $donor_email ) ) {
-					give_update_meta( $payment, '_give_payment_donor_id', $donor_id );
-				}
-			}
-		}
-	} else {
-		// @todo Delete user id meta after releases 2.0
-		// $wpdb->get_var( $wpdb->prepare( "DELETE FROM $wpdb->postmeta WHERE meta_key=%s", '_give_payment_user_id' ) );
-
-		// No more forms found, finish up.
-		give_set_upgrade_complete( 'give_db_healthcheck_donation_donor' );
-	}
+	give_set_upgrade_complete( 'give_dbh_delete_existing_donationmeta_table' );
 }
+
 
 /**
  * Recover old payment data
@@ -284,73 +125,5 @@ function give_db_healthcheck_003_recover_old_paymentdata_callback() {
 	} else {
 		// No more forms found, finish up.
 		give_set_upgrade_complete( 'give_db_healthcheck_003_recover_old_paymentdata' );
-	}
-}
-
-
-/**
- * Recover old donation meta data
- *
- * @since 0.0.3
- */
-function give_db_healthcheck_220_recover_donationmeta_callback(){
-	global $wpdb;
-	$give_updates = Give_Updates::get_instance();
-
-
-	$total_payments = $wpdb->get_results( "SELECT * FROM {$wpdb->prefix}give_paymentmeta", ARRAY_N );
-	$payments       = $wpdb->get_results(
-		"SELECT *
-				FROM {$wpdb->prefix}give_paymentmeta
-				ORDER BY meta_id ASC
-				LIMIT 100
-				OFFSET " . $give_updates->get_offset( 100 ),
-		ARRAY_A
-	);
-
-	if ( ! empty( $payments ) ) {
-		$give_updates->set_percentage( count( $total_payments ), $give_updates->step * 100 );
-
-		foreach ( $payments as $payment ) {
-			if( empty( $payment['meta_value'] ) ) {
-				continue;
-			}
-
-			$existing_donation_value = $wpdb->get_var(
-				$wpdb->prepare(
-					"SELECT meta_value
-					FROM {$wpdb->prefix}give_donationmeta
-					WHERE donation_id = %d
-					AND meta_key = %s
-					",
-					$payment['payment_id'],
-					$payment['meta_key']
-				)
-			);
-
-			if( $existing_donation_value !== $payment['meta_value'] ) {
-				$wpdb->replace(
-					"{$wpdb->prefix}give_donationmeta",
-					array(
-						'donation_id'    => $payment['payment_id'],
-						'meta_key'   => $payment['meta_key'],
-						'meta_value' => $payment['meta_value'],
-					),
-					array(
-						'%d',
-						'%s',
-						'%s'
-					)
-				);
-			}
-
-		}// End while().
-	}else{
-		if( ! give_has_upgrade_completed( 'v220_rename_donation_meta_type' ) ) {
-			give_set_upgrade_complete( 'v220_rename_donation_meta_type' );
-		}
-
-		// No more forms found, finish up.
-		give_set_upgrade_complete( 'give_db_healthcheck_220_recover_donationmeta' );
 	}
 }
