@@ -40,7 +40,7 @@ add_action( 'give_register_updates', 'give_db_healthcheck_notices' );
  */
 function give_dbh_delete_existing_donationmeta_table_callback(){
 	global $wpdb;
-	$wpdb->query( "TRUNCATE TABLE {$wpdb->prefix}give_donationmeta" );
+	$wpdb->query( "DELETE FROM {$wpdb->prefix}give_donationmeta WHERE donation_id IS NULL" );
 
 	give_set_upgrade_complete( 'give_dbh_delete_existing_donationmeta_table' );
 }
