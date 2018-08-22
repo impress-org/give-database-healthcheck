@@ -64,12 +64,12 @@ function give_db_healthcheck_003_recover_old_paymentdata_callback() {
 			'status'         => 'any',
 			'order'          => 'ASC',
 			'post_type'      => array( 'give_payment' ),
-			'posts_per_page' => 100,
+			'posts_per_page' => 20,
 		)
 	);
 
 	if ( $payments->have_posts() ) {
-		$give_updates->set_percentage( $payments->found_posts, $give_updates->step * 100 );
+		$give_updates->set_percentage( $payments->found_posts, $give_updates->step * 20 );
 
 		while ( $payments->have_posts() ) {
 			$payments->the_post();
