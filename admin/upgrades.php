@@ -13,7 +13,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 function give_db_healthcheck_notices() {
 	global $wpdb;
 
-	if(
+	if (
 		$wpdb->query( $wpdb->prepare( "SHOW TABLES LIKE %s", "{$wpdb->prefix}give_paymentmeta" ) )
 		&& ! give_has_upgrade_completed( 'v220_move_data_to_donation_meta' )
 	) {
@@ -25,6 +25,15 @@ function give_db_healthcheck_notices() {
 			)
 		);
 	}
+
+	Give_Updates::get_instance()->register(
+		array(
+			'id'       => 'v220_split_give_payment_meta_to_recover_missing_meta_data_6',
+			'version'  => '0.0.3',
+			'callback' => 'give_db_healthcheck_v220_split_give_payment_meta_to_recover_missing_meta_data',
+			'depend'   => 'v220_move_data_to_donation_meta',
+		)
+	);
 }
 
 add_action( 'give_register_updates', 'give_db_healthcheck_notices' );
@@ -57,9 +66,10 @@ function give_db_healthcheck_v220_move_data_to_donation_meta() {
 		foreach ( $payments as $payment ) {
 			$hasPayment = $wpdb->get_var( "SELECT {$donation_id_col_name} FROM {$donation_table} WHERE donation_id={$payment['donation_id']} AND meta_key='{$payment['meta_key']}'" );
 
-			$wpdb->delete( "{$wpdb->prefix}give_paymentmeta", array( 'meta_id' => absint( $payment['meta_id'] ) ), array( '%d' ) );
+			$wpdb->delete( "{$wpdb->prefix}give_paymentmeta", array( 'meta_id' => absint( $payment['meta_id'] ) ),
+				array( '%d' ) );
 
-			if( ! empty( $hasPayment ) ) {
+			if ( ! empty( $hasPayment ) ) {
 				continue;
 			}
 
@@ -71,5 +81,55 @@ function give_db_healthcheck_v220_move_data_to_donation_meta() {
 	} else {
 		// No more forms found, finish up.
 		give_set_upgrade_complete( 'v220_move_data_to_donation_meta' );
+	}
+}
+
+/**
+ * Recover missing meta data fron _give_payment_meta
+ */
+function give_db_healthcheck_v220_split_give_payment_meta_to_recover_missing_meta_data() {
+	global $wpdb;
+	$give_updates = Give_Updates::get_instance();
+
+	// form query
+	$donations = new WP_Query(
+		array(
+			'paged'          => $give_updates->step,
+			'status'         => 'any',
+			'order'          => 'ASC',
+			'post_type'      => 'give_payment',
+			'posts_per_page' => 100,
+			'fields'         => 'ids',
+		)
+	);
+
+	if ( $donations->have_posts() ) {
+		$give_updates->set_percentage( $donations->found_posts, ( $give_updates->step * 100 ) );
+
+		while ( $donations->have_posts() ) {
+			$donations->the_post();
+			$postID = get_the_ID();
+
+			$paymentMeta = maybe_unserialize( $wpdb->get_var( "
+				SELECT meta_value
+				FROM {$wpdb->prefix}give_donationmeta
+				WHERE donation_id={$postID}
+				AND meta_key='_give_payment_meta'
+			" ) );
+
+			if( empty( $paymentMeta ) ) {
+				continue;
+			}
+
+			if ( array_key_exists( 'form_id', $paymentMeta ) && ! empty( $paymentMeta['form_id'] && ! Give()->payment_meta->get_meta( $postID, '_give_payment_form_id', true ) ) ) {
+				Give()->payment_meta->update_meta( $postID, '_give_payment_form_id', $paymentMeta['form_id'] );
+			}
+
+			if ( array_key_exists( 'form_title', $paymentMeta ) && ! empty( $paymentMeta['form_title'] && ! Give()->payment_meta->get_meta( $postID, '_give_payment_form_title', true ) ) ) {
+				Give()->payment_meta->update_meta( $postID, '_give_payment_form_title', $paymentMeta['form_title'] );
+			}
+		}
+	} else {
+		give_set_upgrade_complete( 'v220_split_give_payment_meta_to_recover_missing_meta_data_6' );
 	}
 }
